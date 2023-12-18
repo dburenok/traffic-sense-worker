@@ -87,7 +87,7 @@ function getVehicleCount(res) {
 }
 
 function getMongoUri(user, pass, addr) {
-  return `mongodb+srv://${user}:${pass}@${addr}/?retryWrites=true&w=majority`;
+  return `mongodb+srv://${user}:${pass}@${addr}/?retryWrites=true&w=majority&compressors=zstd`;
 }
 
 function prefix() {
