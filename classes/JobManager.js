@@ -50,7 +50,9 @@ class JobManager {
       await this.jobLog.updateOne({}, { $set: { nextJobIndex } }, { session });
       await session.commitTransaction();
       this.numJobsCompleted++;
-      const timeTakenMs = performance.now() - this.jobStartTime;
+      const timeRemaining = Math.max(0, 4000 - (performance.now() - this.jobStartTime));
+      await sleep(timeRemaining); // sleep to potentially prevent throttling
+      const timeTakenMs = performance.now() - this.jobStartTime; // should be 4 seconds => ~12.5 minutes per run
       this.processingTimes = [timeTakenMs, ...this.processingTimes.slice(0, 9)];
       console.log(`${prefix()} Job for "${intersection}" completed`);
       this.reportAvgProcessingTime();
@@ -80,6 +82,10 @@ function loadCameraData() {
 
 function prefix() {
   return `[MGR ${new Date().toLocaleTimeString()}]`;
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 module.exports = { JobManager };
