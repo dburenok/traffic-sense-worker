@@ -83,7 +83,7 @@ async function inferenceApiConnectionEstablished() {
 }
 
 function getVehicleCount(res) {
-  return sum(values(res["vehicle_counts"]));
+  return res["vehicle_count"];
 }
 
 function getMongoUri(user, pass, addr) {
