@@ -7,8 +7,8 @@ const { MONGO_USER, MONGO_PASS, MONGO_ADDR } = process.env;
 const mongoUri = getMongoUri(MONGO_USER, MONGO_PASS, MONGO_ADDR);
 const jobManager = new JobManager(mongoUri);
 
-const HEALTH_ENDPOINT = "http://api:14641/api/";
-const INFERENCE_ENDPOINT = "http://api:14641/api/inference/";
+const HEALTH_ENDPOINT = "http://api:8080/api/health/";
+const INFERENCE_ENDPOINT = "http://api:8080/api/inference/";
 
 async function main() {
   console.log(`${prefix()} Pinging inference API at ${HEALTH_ENDPOINT}`);
