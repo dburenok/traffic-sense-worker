@@ -3,7 +3,6 @@ const { MongoClient, ServerApiVersion } = require("mongodb");
 const { map, chunk, isEmpty } = require("lodash");
 
 const { MONGO_USER, MONGO_PASS, MONGO_ADDR } = process.env;
-console.log({ MONGO_USER, MONGO_PASS, MONGO_ADDR });
 const mongoUri = getMongoUri(MONGO_USER, MONGO_PASS, MONGO_ADDR);
 
 const JOB_CHUNK_SIZE = 50;

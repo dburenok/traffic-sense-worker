@@ -1,6 +1,6 @@
 const Axios = require("axios");
 const FormData = require("form-data");
-const { isNil, map, forEach, isEmpty, flatten, toPairs } = require("lodash");
+const { isNil, map, forEach, isEmpty, flatten, toPairs, some, filter, groupBy, sum } = require("lodash");
 const { JobManager } = require("./classes/JobManager");
 
 const { APP_ENV } = process.env;
@@ -24,25 +24,51 @@ async function begin() {
 async function run() {
   try {
     const jobs = jobManager.getNextJobs(); // { _id, urls }[]
-    const jobsWithImages = await Promise.all(
-      map(jobs, ({ _id, urls }) => fetchImages(urls, _id).then((jobImages) => ({ jobImages, _id }))),
+
+    const promises = map(jobs, ({ _id, urls }) =>
+      fetchImages(urls, _id).then((jobImagesDto) => ({
+        _id,
+        fetchSuccess: !some(jobImagesDto, ({ fetchSuccess }) => fetchSuccess === false),
+        jobImagesDto,
+      })),
+    );
+    const jobsWithImages = await Promise.all(promises);
+    const time = new Date();
+
+    const successfulJobsWithImages = filter(jobsWithImages, ({ fetchSuccess }) => fetchSuccess);
+    const unsuccessfulJobsWithImages = filter(jobsWithImages, ({ fetchSuccess }) => !fetchSuccess);
+
+    const completedJobs = [];
+    completedJobs.push(
+      ...map(unsuccessfulJobsWithImages, ({ _id }) => ({
+        intersectionId: _id,
+        time,
+        count: 0,
+        fetchSuccess: false,
+      })),
     );
 
-    if (isEmpty(jobsWithImages)) {
-      throw new Error(`Failed to fetch job images`);
-    }
-
-    const timestamp = new Date();
     const form = new FormData();
-    const jobImages = flatten(map(jobsWithImages, "jobImages"));
-    forEach(jobImages, ({ imageData, imageName }) => form.append("images", imageData, imageName));
+    const successfulJobImages = flatten(map(successfulJobsWithImages, "jobImagesDto"));
+    forEach(successfulJobImages, ({ imageData, imageName }) => form.append("images", imageData, imageName));
 
-    const { vehicle_counts } = await Axios.post(INFERENCE_ENDPOINT, form).then((res) => res.data);
-    const completedJobs = map(toPairs(vehicle_counts), ([imageName, count]) => ({
-      intersectionId: imageName.split(ID_INDEX_SEPARATOR)[0],
-      time: timestamp,
-      count,
-    }));
+    let vehicleCounts = {};
+    if (!isEmpty(successfulJobImages)) {
+      vehicleCounts = await Axios.post(INFERENCE_ENDPOINT, form).then((res) => res.data["vehicle_counts"]);
+      const groupedVehicleCounts = groupBy(
+        toPairs(vehicleCounts),
+        ([imageName]) => imageName.split(ID_INDEX_SEPARATOR)[0],
+      );
+
+      completedJobs.push(
+        ...map(toPairs(groupedVehicleCounts), ([intersectionId, countResults]) => ({
+          intersectionId,
+          time,
+          count: sum(flatten(map(countResults, (v) => v[1]))),
+          fetchSuccess: true,
+        })),
+      );
+    }
 
     await jobManager.completeJobs(completedJobs);
   } catch (e) {
@@ -55,18 +81,33 @@ async function run() {
 jobManager.setup().then(() => begin());
 
 async function fetchImages(urls, id) {
-  const promises = map(urls, (url) => Axios.get(url, { responseType: "arraybuffer" }).catch(() => null));
+  const promises = map(urls, (url) =>
+    Axios.get(url, { responseType: "arraybuffer" })
+      .catch(() => ({ fetchSuccess: false }))
+      .then(({ fetchSuccess, ...res }) =>
+        isNil(fetchSuccess) && !isNil(res) && !isNil(res["data"])
+          ? { url, fetchSuccess: true, res }
+          : { url, fetchSuccess: false },
+      ),
+  );
   const responses = await Promise.all(promises);
-  const nonNullResponses = responses.filter((res) => !isNil(res));
 
-  if (isEmpty(nonNullResponses)) {
-    console.log(`Fetched no images for`, urls);
+  const failedResponses = responses.filter((r) => !r.fetchSuccess);
+  if (!isEmpty(failedResponses)) {
+    console.log(`Fetch failure in ${id}, marking as unsuccessful`);
   }
 
-  return nonNullResponses.map((res, i) => ({
-    imageData: Buffer.from(res.data),
-    imageName: `${id}${ID_INDEX_SEPARATOR}${i + 1}.${res["headers"]["content-type"].split("/")[1]}`,
-  }));
+  return map(responses, ({ url, fetchSuccess, res }, i) => {
+    return fetchSuccess
+      ? {
+          fetchSuccess,
+          imageData: Buffer.from(res["data"]),
+          imageName: `${id}${ID_INDEX_SEPARATOR}${i + 1}.${res["headers"]["content-type"].split("/")[1]}`,
+        }
+      : {
+          fetchSuccess,
+        };
+  });
 }
 
 async function establishApiConnection() {
