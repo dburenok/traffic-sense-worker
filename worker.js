@@ -1,6 +1,6 @@
 const Axios = require("axios");
 const FormData = require("form-data");
-const { isNil, map, forEach, isEmpty, flatten, toPairs, some, filter, groupBy, sum } = require("lodash");
+const { isNil, map, forEach, isEmpty, some } = require("lodash");
 const { JobManager } = require("./classes/JobManager");
 
 const { APP_ENV } = process.env;
@@ -13,7 +13,7 @@ const ID_INDEX_SEPARATOR = "__";
 async function begin() {
   try {
     await establishApiConnection();
-    console.log(`Pinged inference API at ${HEALTH_ENDPOINT}!`);
+    console.log(`Pinged inference API at ${HEALTH_ENDPOINT}`);
     run();
   } catch (e) {
     console.log("Failed to establish connection with inference API. Exiting...");
@@ -25,51 +25,31 @@ async function run() {
   try {
     const jobs = jobManager.getNextJobs(); // { _id, urls }[]
 
-    const promises = map(jobs, ({ _id, urls }) =>
-      fetchImages(urls, _id).then((jobImagesDto) => ({
-        _id,
-        fetchSuccess: !some(jobImagesDto, ({ fetchSuccess }) => fetchSuccess === false),
-        jobImagesDto,
-      })),
-    );
-    const jobsWithImages = await Promise.all(promises);
-    const time = new Date();
+    const promises = map(jobs, ({ urls, _id }) =>
+      fetchImages(urls, _id).then((imageDataDto) => {
+        const jobSuccessful = !some(imageDataDto, ({ fetchSuccess }) => !fetchSuccess);
+        if (!jobSuccessful) {
+          return {
+            intersectionId: _id,
+            time: new Date(),
+            count: 0,
+            fetchSuccess: false,
+          };
+        }
 
-    const successfulJobsWithImages = filter(jobsWithImages, ({ fetchSuccess }) => fetchSuccess);
-    const unsuccessfulJobsWithImages = filter(jobsWithImages, ({ fetchSuccess }) => !fetchSuccess);
+        const form = new FormData();
+        forEach(imageDataDto, ({ imageData, imageName }) => form.append("images", imageData, imageName));
 
-    const completedJobs = [];
-    completedJobs.push(
-      ...map(unsuccessfulJobsWithImages, ({ _id }) => ({
-        intersectionId: _id,
-        time,
-        count: 0,
-        fetchSuccess: false,
-      })),
-    );
-
-    const form = new FormData();
-    const successfulJobImages = flatten(map(successfulJobsWithImages, "jobImagesDto"));
-    forEach(successfulJobImages, ({ imageData, imageName }) => form.append("images", imageData, imageName));
-
-    let vehicleCounts = {};
-    if (!isEmpty(successfulJobImages)) {
-      vehicleCounts = await Axios.post(INFERENCE_ENDPOINT, form).then((res) => res.data["vehicle_counts"]);
-      const groupedVehicleCounts = groupBy(
-        toPairs(vehicleCounts),
-        ([imageName]) => imageName.split(ID_INDEX_SEPARATOR)[0],
-      );
-
-      completedJobs.push(
-        ...map(toPairs(groupedVehicleCounts), ([intersectionId, countResults]) => ({
-          intersectionId,
-          time,
-          count: sum(flatten(map(countResults, (v) => v[1]))),
+        return Axios.post(INFERENCE_ENDPOINT, form).then((res) => ({
+          intersectionId: _id,
+          time: new Date(),
+          count: parseInt(res.data["vehicle_count"]),
           fetchSuccess: true,
-        })),
-      );
-    }
+        }));
+      }),
+    );
 
+    const completedJobs = await Promise.all(promises);
     await jobManager.completeJobs(completedJobs);
   } catch (e) {
     console.error(e);
@@ -98,7 +78,7 @@ async function fetchImages(urls, id) {
   }
 
   return map(responses, ({ url, fetchSuccess, res }, i) => {
-    return fetchSuccess
+    return fetchSuccess === true
       ? {
           fetchSuccess,
           imageData: Buffer.from(res["data"]),

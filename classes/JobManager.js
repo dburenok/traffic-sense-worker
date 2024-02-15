@@ -5,7 +5,7 @@ const { map, chunk, isEmpty } = require("lodash");
 const { MONGO_USER, MONGO_PASS, MONGO_ADDR } = process.env;
 const mongoUri = getMongoUri(MONGO_USER, MONGO_PASS, MONGO_ADDR);
 
-const JOB_CHUNK_SIZE = 50;
+const JOB_CHUNK_SIZE = 25;
 const CYCLE_TARGET_TIME_MS = 4.75 * 60 * 1000;
 
 class JobManager {
