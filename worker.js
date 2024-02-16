@@ -32,8 +32,7 @@ async function run() {
           return {
             intersectionId: _id,
             time: new Date(),
-            count: 0,
-            fetchSuccess: false,
+            count: -1,
           };
         }
 
@@ -44,7 +43,6 @@ async function run() {
           intersectionId: _id,
           time: new Date(),
           count: parseInt(res.data["vehicle_count"]),
-          fetchSuccess: true,
         }));
       }),
     );
