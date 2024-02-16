@@ -25,29 +25,33 @@ async function run() {
   try {
     const jobs = jobManager.getNextJobs(); // { _id, urls }[]
 
-    const promises = map(jobs, ({ urls, _id }) =>
-      fetchImages(urls, _id).then((imageDataDto) => {
-        const jobSuccessful = !some(imageDataDto, ({ fetchSuccess }) => !fetchSuccess);
-        if (!jobSuccessful) {
-          return {
-            intersectionId: _id,
-            time: new Date(),
-            count: -1,
-          };
-        }
+    const promises = map(jobs, async ({ urls, _id }) => {
+      const imageDataDto = await fetchImages(urls, _id);
 
-        const form = new FormData();
-        forEach(imageDataDto, ({ imageData, imageName }) => form.append("images", imageData, imageName));
-
-        return Axios.post(INFERENCE_ENDPOINT, form).then((res) => ({
+      const jobSuccessful = !some(imageDataDto, ({ fetchSuccess }) => !fetchSuccess);
+      if (!jobSuccessful) {
+        return {
           intersectionId: _id,
           time: new Date(),
-          count: parseInt(res.data["vehicle_count"]),
-        }));
-      }),
-    );
+          count: -1,
+        };
+      }
+
+      const form = new FormData();
+      forEach(imageDataDto, ({ imageData, imageName }) => form.append("images", imageData, imageName));
+
+      const apiResponse = await Axios.post(INFERENCE_ENDPOINT, form);
+      const count = parseInt(apiResponse.data["vehicle_count"]);
+
+      return {
+        intersectionId: _id,
+        time: new Date(),
+        count,
+      };
+    });
 
     const completedJobs = await Promise.all(promises);
+
     await jobManager.completeJobs(completedJobs);
   } catch (e) {
     console.error(e);

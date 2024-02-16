@@ -1,10 +1,11 @@
 {
   "name": "traffic-flow-worker",
-  "version": "1.7.1",
+  "version": "1.7.2",
   "description": "",
   "main": "index.js",
   "scripts": {
-    "watch": "nodemon ./worker.js"
+    "watch": "nodemon ./worker.js",
+    "start": "node ./worker.js"
   },
   "keywords": [],
   "author": "",
