@@ -51,7 +51,7 @@ async function run() {
 
     await jobManager.completeJob(completedJob);
   } catch (e) {
-    console.error(e.message);
+    console.error(e);
   }
   setTimeout(run);
 }
