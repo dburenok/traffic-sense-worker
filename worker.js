@@ -29,12 +29,12 @@ async function run() {
 
     const promises = _.map(job, async ({ country, locality, camera }) => {
       const { imageUrls, internalId } = camera;
+      const time = new Date();
       const imageDataDto = await fetchImages(imageUrls, internalId);
-
       const jobSuccessful = !_.some(imageDataDto, ({ fetchSuccess }) => !fetchSuccess);
       if (!jobSuccessful) {
-        console.log("Fetch failure in", imageUrls);
-        return { country, locality, internalId, count: -1, time: new Date() };
+        console.log(`Fetch failure in ${imageUrls}`);
+        return { country, locality, internalId, count: -1, time };
       }
 
       const form = new FormData();
@@ -42,9 +42,9 @@ async function run() {
       const apiResponse = await Axios.post(INFERENCE_ENDPOINT, form);
       const count = parseInt(apiResponse.data["vehicle_count"]);
       if (count === -1) {
-        console.log("Inference failure in", imageUrls);
+        console.log(`Inference failure in ${imageUrls}`);
       }
-      return { country, locality, internalId, count, time: new Date() };
+      return { country, locality, internalId, count, time };
     });
 
     const completedJob = await Promise.all(promises);
@@ -53,10 +53,22 @@ async function run() {
   } catch (e) {
     console.error(e);
   }
-  setTimeout(run);
+
+  setTimeout(run, 1000);
 }
 
 jobManager.setup().then(() => begin());
+
+setInterval(() => {
+  const memoryData = process.memoryUsage();
+  const memoryUsage = {
+    rss: `${formatMemoryUsage(memoryData.rss)} -> Resident Set Size - total memory allocated for process execution`,
+    heapTotal: `${formatMemoryUsage(memoryData.heapTotal)} -> total size of allocated heap`,
+    heapUsed: `${formatMemoryUsage(memoryData.heapUsed)} -> actual memory used during execution`,
+    external: `${formatMemoryUsage(memoryData.external)} -> V8 external memory`,
+  };
+  console.log(memoryUsage);
+}, 15 * 60 * 1000);
 
 async function fetchImages(urls, internalId) {
   const promises = _.map(urls, (url) =>
@@ -82,4 +94,8 @@ async function fetchImages(urls, internalId) {
 
 async function establishApiConnection() {
   return Axios.get(HEALTH_ENDPOINT).then(({ data }) => !_.isNil(data) && !_.isNil(data.message));
+}
+
+function formatMemoryUsage(data) {
+  return `${Math.round((data / 1024 / 1024) * 100) / 100} MB`;
 }
