@@ -1,12 +1,11 @@
 const { performance } = require("node:perf_hooks");
 const { MongoClient, ServerApiVersion } = require("mongodb");
-const { map, chunk, isEmpty } = require("lodash");
+const _ = require("lodash");
 
 const { MONGO_USER, MONGO_PASS, MONGO_ADDR } = process.env;
 const mongoUri = getMongoUri(MONGO_USER, MONGO_PASS, MONGO_ADDR);
 
-const JOB_CHUNK_SIZE = 25;
-const CYCLE_TARGET_TIME_MS = 4.75 * 60 * 1000;
+const JOB_SIZE = 25;
 
 class JobManager {
   constructor() {
@@ -15,69 +14,55 @@ class JobManager {
     });
 
     this.db = this.client.db("dev");
-    this.camerasCollection = this.db.collection("cameras");
+    this.snapshotsCollection = this.db.collection("snapshots");
     this.countsCollection = this.db.collection("counts");
 
-    this.cameraChunks = [];
-    this.numCameras = 0;
-    this.jobIndex = 0;
-    this.jobStartTime = 0;
-    this.numCamerasCompleted = 0;
-    this.cycleStartTime = 0;
+    this.jobChunks = [];
+    this.nextJobChunkIndex = 0;
+    this.cycleStartTime;
   }
 
   async setup() {
-    console.log({ JOB_CHUNK_SIZE });
+    const [snapshot] = await this.snapshotsCollection.find().sort({ timestamp: -1 }).limit(1).toArray();
 
-    const cameras = await this.camerasCollection
-      .find()
-      .project({ urls: 1 })
-      .toArray()
-      .then((cameras) => map(cameras, ({ _id, urls }) => ({ urls, _id: _id.toString() })));
-
-    if (isEmpty(cameras)) {
-      throw new Error("No cameras fetched");
+    if (_.isEmpty(snapshot)) {
+      throw new Error("Failed to fetch snapshot");
     }
 
-    console.log(`Fetched ${cameras.length} cameras`);
+    const { CA, USA } = snapshot["snapshot"];
+    const numCamerasCA = _.reduce(_.toPairs(CA), (pv, [_, cameraArray]) => pv + cameraArray.length, 0);
+    const numCamerasUSA = _.reduce(_.toPairs(USA), (pv, [_, cameraArray]) => pv + cameraArray.length, 0);
+    console.log(`Snapshot contains ${numCamerasCA} CA cameras and ${numCamerasUSA} USA cameras (but more URLs)`);
 
-    const cameraCounts = map(cameras, ({ urls }) => urls.length);
-    if (Math.min(...cameraCounts) === 0) {
-      throw new Error("At least one camera contains no urls");
-    }
-
-    this.cameraChunks = chunk(cameras, JOB_CHUNK_SIZE);
-    this.numCameras = cameras.length;
+    const jobs = createJobs(snapshot["snapshot"]);
+    this.jobChunks = _.chunk(jobs, JOB_SIZE);
+    console.log(`Created ${jobs.length} jobs, ${this.jobChunks.length} chunks`);
   }
 
-  getNextJobs() {
-    if (this.numCamerasCompleted % this.numCameras === 0) {
+  getNextJob() {
+    if (this.nextJobChunkIndex === 0) {
       this.cycleStartTime = performance.now();
     }
 
-    this.jobStartTime = performance.now();
-
-    return this.cameraChunks[this.jobIndex];
+    return this.jobChunks[this.nextJobChunkIndex];
   }
 
-  async completeJobs(completedJobs) {
-    if (completedJobs.length !== this.cameraChunks[this.jobIndex].length) {
-      throw new Error("Invalid number of completed jobs");
-    }
+  async completeJob(completedJob) {
+    _.forEach(completedJob, ({ country, locality, internalId, count, time }) => {
+      if (_.isNil(country) || _.isNil(locality) || _.isNil(internalId) || _.isNil(count) || _.isNil(time)) {
+        throw new Error("Job contains insufficient data");
+      }
+    });
 
-    await this.countsCollection.insertMany(completedJobs);
+    await this.countsCollection.insertMany(completedJob);
 
-    this.jobIndex = (this.jobIndex + 1) % this.cameraChunks.length;
-    this.numCamerasCompleted += completedJobs.length;
+    const percentDone = Math.round(((this.nextJobChunkIndex + 1) / this.jobChunks.length) * 10000) / 100;
+    this.nextJobChunkIndex = (this.nextJobChunkIndex + 1) % this.jobChunks.length;
+    console.log(`Percent done: ${percentDone}`);
 
-    const timeTaken = performance.now() - this.jobStartTime;
-    const percentDone = completedJobs.length / this.numCameras;
-    const sleepTime = CYCLE_TARGET_TIME_MS * percentDone - timeTaken;
-    await sleep(sleepTime);
-
-    if (this.numCamerasCompleted % this.numCameras === 0) {
+    if (this.nextJobChunkIndex === 0) {
       const cycleTimeTakenMin = ~~(performance.now() - this.cycleStartTime) / 1000 / 60;
-      console.log(`Cycle took ${cycleTimeTakenMin} minutes`);
+      console.log(`Full job cycle took ${cycleTimeTakenMin}m`);
     }
   }
 
@@ -92,6 +77,25 @@ function getMongoUri(user, pass, addr) {
 
 function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
+}
+
+function createJobs(snapshot) {
+  const countries = _.keys(snapshot);
+  const jobs = [];
+
+  for (const country of countries) {
+    for (const [locality, cameraArray] of _.toPairs(snapshot[country])) {
+      for (const camera of cameraArray) {
+        jobs.push({
+          country,
+          locality,
+          camera,
+        });
+      }
+    }
+  }
+
+  return jobs;
 }
 
 module.exports = { JobManager };

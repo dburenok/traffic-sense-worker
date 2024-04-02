@@ -1,6 +1,8 @@
+require("dotenv").config();
+
 const Axios = require("axios");
 const FormData = require("form-data");
-const { isNil, map, forEach, isEmpty, some } = require("lodash");
+const _ = require("lodash");
 const { JobManager } = require("./classes/JobManager");
 
 const { APP_ENV } = process.env;
@@ -23,77 +25,61 @@ async function begin() {
 
 async function run() {
   try {
-    const jobs = jobManager.getNextJobs(); // { _id, urls }[]
+    const job = jobManager.getNextJob();
 
-    const promises = map(jobs, async ({ urls, _id }) => {
-      const imageDataDto = await fetchImages(urls, _id);
+    const promises = _.map(job, async ({ country, locality, camera }) => {
+      const { imageUrls, internalId } = camera;
+      const imageDataDto = await fetchImages(imageUrls, internalId);
 
-      const jobSuccessful = !some(imageDataDto, ({ fetchSuccess }) => !fetchSuccess);
+      const jobSuccessful = !_.some(imageDataDto, ({ fetchSuccess }) => !fetchSuccess);
       if (!jobSuccessful) {
-        return {
-          intersectionId: _id,
-          time: new Date(),
-          count: -1,
-        };
+        console.log("Fetch failure in", imageUrls);
+        return { country, locality, internalId, count: -1, time: new Date() };
       }
 
       const form = new FormData();
-      forEach(imageDataDto, ({ imageData, imageName }) => form.append("images", imageData, imageName));
-
+      _.forEach(imageDataDto, ({ imageData, imageName }) => form.append("images", imageData, imageName));
       const apiResponse = await Axios.post(INFERENCE_ENDPOINT, form);
       const count = parseInt(apiResponse.data["vehicle_count"]);
-
-      return {
-        intersectionId: _id,
-        time: new Date(),
-        count,
-      };
+      if (count === -1) {
+        console.log("Inference failure in", imageUrls);
+      }
+      return { country, locality, internalId, count, time: new Date() };
     });
 
-    const completedJobs = await Promise.all(promises);
+    const completedJob = await Promise.all(promises);
 
-    await jobManager.completeJobs(completedJobs);
+    await jobManager.completeJob(completedJob);
   } catch (e) {
-    console.error(e);
+    console.error(e.message);
   }
-
   setTimeout(run);
 }
 
 jobManager.setup().then(() => begin());
 
-async function fetchImages(urls, id) {
-  const promises = map(urls, (url) =>
+async function fetchImages(urls, internalId) {
+  const promises = _.map(urls, (url) =>
     Axios.get(url, { responseType: "arraybuffer" })
       .catch(() => ({ fetchSuccess: false }))
       .then(({ fetchSuccess, ...res }) =>
-        isNil(fetchSuccess) && !isNil(res) && !isNil(res["data"])
-          ? { url, fetchSuccess: true, res }
-          : { url, fetchSuccess: false },
-      ),
+        _.isNil(fetchSuccess) && !_.isNil(res) && !_.isNil(res["data"])
+          ? { fetchSuccess: true, res }
+          : { fetchSuccess: false }
+      )
   );
   const responses = await Promise.all(promises);
-
-  const failedResponses = responses.filter((r) => !r.fetchSuccess);
-  if (!isEmpty(failedResponses)) {
-    console.log(`Fetch failure in ${id}, marking as unsuccessful`);
-  }
-
-  return map(responses, ({ url, fetchSuccess, res }, i) => {
-    return fetchSuccess === true
+  return _.map(responses, ({ fetchSuccess, res }, i) => {
+    return fetchSuccess
       ? {
           fetchSuccess,
           imageData: Buffer.from(res["data"]),
-          imageName: `${id}${ID_INDEX_SEPARATOR}${i + 1}.${res["headers"]["content-type"].split("/")[1]}`,
+          imageName: `${internalId}${ID_INDEX_SEPARATOR}${i + 1}`,
         }
-      : {
-          fetchSuccess,
-        };
+      : { fetchSuccess };
   });
 }
 
 async function establishApiConnection() {
-  return Axios.get(HEALTH_ENDPOINT).then(
-    (res) => !isNil(res.data["message"]) && res.data["message"].includes("API is up"),
-  );
+  return Axios.get(HEALTH_ENDPOINT).then(({ data }) => !_.isNil(data) && !_.isNil(data.message));
 }
