@@ -29,14 +29,17 @@ class JobManager {
       throw new Error("Failed to fetch snapshot");
     }
 
-    const { CA, USA } = snapshot["snapshot"];
-    const numCamerasCA = _.reduce(_.toPairs(CA), (pv, [_, cameraArray]) => pv + cameraArray.length, 0);
-    const numCamerasUSA = _.reduce(_.toPairs(USA), (pv, [_, cameraArray]) => pv + cameraArray.length, 0);
+    const { data, timestamp } = snapshot;
+    console.log(`Snapshot timestamp: ${timestamp.toISOString()}`);
+
+    const { CA, USA } = data;
+    const numCamerasCA = _.reduce(_.toPairs(CA), (pv, [_, { cameraData }]) => pv + cameraData.length, 0);
+    const numCamerasUSA = _.reduce(_.toPairs(USA), (pv, [_, { cameraData }]) => pv + cameraData.length, 0);
     console.log(`Snapshot contains ${numCamerasCA} CA cameras and ${numCamerasUSA} USA cameras (but more URLs)`);
 
-    const jobs = createJobs(snapshot["snapshot"]);
+    const jobs = createJobs(data);
     this.jobChunks = _.chunk(jobs, JOB_SIZE);
-    console.log(`Created ${jobs.length} jobs, ${this.jobChunks.length} chunks`);
+    console.log(`Created ${jobs.length} jobs (${this.jobChunks.length} chunks of ${JOB_SIZE})`);
   }
 
   getNextJob() {
@@ -75,13 +78,12 @@ function getMongoUri(user, pass, addr) {
   return `mongodb+srv://${user}:${pass}@${addr}/?retryWrites=true&w=majority`;
 }
 
-function createJobs(snapshot) {
-  const countries = _.keys(snapshot);
+function createJobs(data) {
   const jobs = [];
-  for (const country of countries) {
-    for (const [locality, cameraArray] of _.toPairs(snapshot[country])) {
-      for (const camera of cameraArray) {
-        jobs.push({ country, locality, camera });
+  for (const [country, countryData] of _.toPairs(data)) {
+    for (const [locality, { headers, cameraData }] of _.toPairs(countryData)) {
+      for (const camera of cameraData) {
+        jobs.push({ country, locality, camera, headers });
       }
     }
   }
