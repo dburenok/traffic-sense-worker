@@ -5,7 +5,7 @@ const _ = require("lodash");
 const { MONGO_USER, MONGO_PASS, MONGO_ADDR } = process.env;
 const mongoUri = getMongoUri(MONGO_USER, MONGO_PASS, MONGO_ADDR);
 
-const JOB_SIZE = 25;
+const JOB_SIZE = 50;
 
 class JobManager {
   constructor() {
@@ -75,27 +75,17 @@ function getMongoUri(user, pass, addr) {
   return `mongodb+srv://${user}:${pass}@${addr}/?retryWrites=true&w=majority`;
 }
 
-function sleep(ms) {
-  return new Promise((r) => setTimeout(r, ms));
-}
-
 function createJobs(snapshot) {
   const countries = _.keys(snapshot);
   const jobs = [];
-
   for (const country of countries) {
     for (const [locality, cameraArray] of _.toPairs(snapshot[country])) {
       for (const camera of cameraArray) {
-        jobs.push({
-          country,
-          locality,
-          camera,
-        });
+        jobs.push({ country, locality, camera });
       }
     }
   }
-
-  return jobs;
+  return _.shuffle(jobs);
 }
 
 module.exports = { JobManager };
