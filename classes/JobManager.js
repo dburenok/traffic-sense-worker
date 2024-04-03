@@ -5,7 +5,7 @@ const _ = require("lodash");
 const { MONGO_USER, MONGO_PASS, MONGO_ADDR } = process.env;
 const mongoUri = getMongoUri(MONGO_USER, MONGO_PASS, MONGO_ADDR);
 
-const JOB_SIZE = 50;
+const JOB_SIZE = 25;
 
 class JobManager {
   constructor() {
@@ -14,8 +14,9 @@ class JobManager {
     });
 
     this.db = this.client.db("dev");
-    this.snapshotsCollection = this.db.collection("snapshots");
     this.countsCollection = this.db.collection("counts");
+    this.snapshotsCollection = this.db.collection("snapshots");
+    this.topCamerasCollection = this.db.collection("top_cameras");
 
     this.jobChunks = [];
     this.nextJobChunkIndex = 0;
@@ -23,21 +24,28 @@ class JobManager {
   }
 
   async setup() {
-    const [snapshot] = await this.snapshotsCollection.find().sort({ timestamp: -1 }).limit(1).toArray();
+    const [topCameras] = await this.topCamerasCollection.find().sort({ timestamp: -1 }).limit(1).toArray();
+    if (_.isEmpty(topCameras)) {
+      throw new Error("Failed to fetch topCameras");
+    }
 
+    const [snapshot] = await this.snapshotsCollection.find().sort({ timestamp: -1 }).limit(1).toArray();
     if (_.isEmpty(snapshot)) {
       throw new Error("Failed to fetch snapshot");
     }
 
-    const { data, timestamp } = snapshot;
-    console.log(`Snapshot timestamp: ${timestamp.toISOString()}`);
+    const { top_cameras, timestamp: topCamerasTimestamp } = topCameras;
+    console.log(`topCameras timestamp: ${topCamerasTimestamp.toISOString()}`);
 
-    const { CA, USA } = data;
-    const numCamerasCA = _.reduce(_.toPairs(CA), (pv, [_, { cameraData }]) => pv + cameraData.length, 0);
-    const numCamerasUSA = _.reduce(_.toPairs(USA), (pv, [_, { cameraData }]) => pv + cameraData.length, 0);
-    console.log(`Snapshot contains ${numCamerasCA} CA cameras and ${numCamerasUSA} USA cameras (but more URLs)`);
+    const { data: snapshotData, timestamp: snapshotTimestamp } = snapshot;
+    console.log(`snapshot timestamp: ${snapshotTimestamp.toISOString()}`);
 
-    const jobs = createJobs(data);
+    const { CA, USA } = top_cameras;
+    const numCamerasCA = _.reduce(_.toPairs(CA), (pv, [_, cameraData]) => pv + cameraData.length, 0);
+    const numCamerasUS = _.reduce(_.toPairs(USA), (pv, [_, cameraData]) => pv + cameraData.length, 0);
+    console.log(`topCameras contains ${numCamerasCA} CA cameras and ${numCamerasUS} US cameras (but more URLs)`);
+
+    const jobs = createJobs(top_cameras, snapshotData);
     this.jobChunks = _.chunk(jobs, JOB_SIZE);
     console.log(`Created ${jobs.length} jobs (${this.jobChunks.length} chunks of ${JOB_SIZE})`);
   }
@@ -78,12 +86,16 @@ function getMongoUri(user, pass, addr) {
   return `mongodb+srv://${user}:${pass}@${addr}/?retryWrites=true&w=majority`;
 }
 
-function createJobs(data) {
+function createJobs(top_cameras, snapshotData) {
   const jobs = [];
-  for (const [country, countryData] of _.toPairs(data)) {
-    for (const [locality, { headers, cameraData }] of _.toPairs(countryData)) {
-      for (const camera of cameraData) {
-        jobs.push({ country, locality, camera, headers });
+  for (const [country, countryData] of _.toPairs(top_cameras)) {
+    for (const [locality, cameraData] of _.toPairs(countryData)) {
+      for (const { internal_id } of cameraData) {
+        const camera = _.find(snapshotData[country][locality]["cameraData"], (v) => v["internalId"] === internal_id);
+        if (_.isNil(camera)) {
+          throw new Error("Failed to find topCamera in snapshot");
+        }
+        jobs.push({ country, locality, camera });
       }
     }
   }
